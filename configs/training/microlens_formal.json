@@ -1,0 +1,26 @@
+{
+  "dataset": "MicroLens",
+  "transport": {
+    "updates": 94000,
+    "batch_size": 256,
+    "seed": 20260917,
+    "encoder_lr": 0.000025,
+    "transport_lr": 0.00005,
+    "info_nce_weight": 0.09578278149537614,
+    "warmup_updates": 500,
+    "weight_decay": 0.01,
+    "gradient_clip": 1.0,
+    "log_interval": 100
+  },
+  "source_calibration": {
+    "updates": 5321,
+    "batch_size": 256,
+    "seed": 2026091704,
+    "learning_rate": 0.0001,
+    "warmup_updates": 500,
+    "heun_steps": 32,
+    "weight_decay": 0.01,
+    "gradient_clip": 1.0,
+    "log_interval": 25
+  }
+}

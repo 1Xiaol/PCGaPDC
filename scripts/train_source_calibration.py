@@ -25,12 +25,8 @@ def main() -> None:
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--transport", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--config", type=Path)
-    parser.add_argument("--updates", type=int, default=1000)
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--heun-steps", type=int, default=32)
-    parser.add_argument("--learning-rate", type=float, default=1e-4)
-    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--model-config", type=Path, required=True)
+    parser.add_argument("--training-config", type=Path, required=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
@@ -38,32 +34,46 @@ def main() -> None:
     device = torch.device(args.device)
     transport = load_transport(args.transport, device).eval()
     transport.requires_grad_(False)
-    default = SourceCalibrationConfig(
-        cond_dim=transport.config.condition_dim * (transport.config.global_tokens + 1),
-        semantic_dim=transport.config.semantic_dim,
-        history_tokens=transport.config.global_tokens,
-    )
-    config = default
-    if args.config is not None:
-        raw = read_json(args.config)
-        if "max_angle_rad" in raw and "max_angle" not in raw:
-            raw["max_angle"] = raw["max_angle_rad"]
-        names = {field.name for field in fields(SourceCalibrationConfig)}
-        values = {name: raw.get(name, getattr(default, name)) for name in names}
-        config = SourceCalibrationConfig(**values)
+    model_raw = read_json(args.model_config)
+    names = {field.name for field in fields(SourceCalibrationConfig)}
+    missing = sorted(names - set(model_raw))
+    if missing:
+        raise ValueError(f"source-calibration model config is missing fields: {missing}")
+    config = SourceCalibrationConfig(**{name: model_raw[name] for name in names})
+    training_config = read_json(args.training_config)
+    train = training_config.get("source_calibration")
+    required = {
+        "updates",
+        "batch_size",
+        "seed",
+        "learning_rate",
+        "warmup_updates",
+        "heun_steps",
+        "weight_decay",
+        "gradient_clip",
+        "log_interval",
+    }
+    if not isinstance(train, dict) or required - set(train):
+        raise ValueError(f"training config source_calibration fields missing: {sorted(required - set(train or {}))}")
     expected_cond_dim = transport.config.condition_dim * (transport.config.global_tokens + 1)
     if config.cond_dim != expected_cond_dim or config.semantic_dim != transport.config.semantic_dim:
         raise ValueError("source-calibration dimensions do not match the transport")
 
-    torch.manual_seed(args.seed)
+    torch.manual_seed(int(train["seed"]))
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
+        torch.cuda.manual_seed_all(int(train["seed"]))
     calibration = ConditionalSourceCalibration(config).to(device)
-    optimizer = torch.optim.AdamW(calibration.parameters(), lr=args.learning_rate, weight_decay=0.01)
-    generator = torch.Generator().manual_seed(args.seed)
+    optimizer = torch.optim.AdamW(
+        calibration.parameters(),
+        lr=float(train["learning_rate"]),
+        weight_decay=float(train["weight_decay"]),
+    )
+    generator = torch.Generator().manual_seed(int(train["seed"]))
     users = len(arrays["source"])
-    for update in range(args.updates):
-        index = torch.randint(users, (args.batch_size,), generator=generator)
+    updates = int(train["updates"])
+    batch_size = int(train["batch_size"])
+    for update in range(updates):
+        index = torch.randint(users, (batch_size,), generator=generator)
         batch = {
             name: torch.from_numpy(values[index.numpy()]).to(device)
             for name, values in arrays.items()
@@ -79,7 +89,7 @@ def main() -> None:
         generated = spherical_heun(
             lambda value, time: transport.velocity(value, time, memory),
             adjusted,
-            steps=args.heun_steps,
+            steps=int(train["heun_steps"]),
         )
         losses = source_calibration_loss(
             generated, batch["target"], batch["target_valid"], movement
@@ -87,9 +97,14 @@ def main() -> None:
         loss = losses["loss"].mean()
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(calibration.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(calibration.parameters(), float(train["gradient_clip"]))
+        factor = 1.0 if int(train["warmup_updates"]) <= 0 else min(
+            1.0, (update + 1) / int(train["warmup_updates"])
+        )
+        for group in optimizer.param_groups:
+            group["lr"] = float(train["learning_rate"]) * factor
         optimizer.step()
-        if update % 100 == 0 or update + 1 == args.updates:
+        if update % int(train["log_interval"]) == 0 or update + 1 == updates:
             record = {"update": update + 1, **{name: float(value.mean().detach()) for name, value in losses.items()}}
             print(json.dumps(record))
     save_source_calibration(
@@ -97,10 +112,10 @@ def main() -> None:
         calibration,
         transport_route=transport.route,
         transport_config=transport.config,
+        training_config=training_config,
     )
     print(json.dumps({"checkpoint": str(args.output)}))
 
 
 if __name__ == "__main__":
     main()
-

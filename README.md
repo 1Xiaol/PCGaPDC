@@ -24,6 +24,8 @@ The pretrained text encoder, language model, datasets, and trained weights are n
 
 Transport training uses a dense NPZ file containing source samples, paired targets, observed-history embeddings, collaborative-evidence embeddings, and padding masks. Source calibration uses a related NPZ file with a target-validity mask. Evaluation uses a separate NPZ file with generated embeddings and ragged history and target arrays.
 
+Formal optimization parameters are dataset-specific and stored in `configs/training/`. The model architecture and optimization configuration are passed separately to every training command.
+
 See [docs/DATA.md](docs/DATA.md) for the complete array contracts.
 
 Pack individual NPY arrays into a validated NPZ contract:
@@ -47,8 +49,8 @@ Train the history-conditioned transport:
 ```bash
 python scripts/train_transport.py \
   --input data/train_episodes.npz \
-  --route history_conditioned_rfm \
-  --updates 1000 \
+  --model-config configs/model/history_conditioned_rfm.json \
+  --training-config configs/training/recif_formal.json \
   --output outputs/history_conditioned_transport.pt
 ```
 
@@ -57,8 +59,8 @@ Train the dual-view conditioned transport:
 ```bash
 python scripts/train_transport.py \
   --input data/train_episodes.npz \
-  --route dual_view_conditioned_rfm \
-  --updates 1000 \
+  --model-config configs/model/dual_view_conditioned_rfm.json \
+  --training-config configs/training/recif_formal.json \
   --output outputs/dual_view_conditioned_transport.pt
 ```
 
@@ -68,9 +70,12 @@ Train conditional source calibration against the frozen dual-view transport:
 python scripts/train_source_calibration.py \
   --input data/source_calibration.npz \
   --transport outputs/dual_view_conditioned_transport.pt \
-  --output outputs/source_calibration.pt \
-  --updates 1000
+  --model-config configs/model/conditional_source_calibration.json \
+  --training-config configs/training/recif_formal.json \
+  --output outputs/source_calibration.pt
 ```
+
+Use `configs/training/microlens_formal.json` for the MicroLens formal configuration. Use `configs/training/reference_quick.json` only when a short reference run is explicitly intended; it does not reproduce the reported tables.
 
 Generate semantic samples for caption decoding or embedding evaluation:
 

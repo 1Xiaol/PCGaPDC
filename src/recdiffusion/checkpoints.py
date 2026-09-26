@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 import torch
 
@@ -11,13 +11,19 @@ from .source_calibration import ConditionalSourceCalibration, SourceCalibrationC
 from .transport import TransportConfig, build_transport
 
 
-def save_transport(path: str | Path, model: torch.nn.Module) -> None:
+def save_transport(
+    path: str | Path,
+    model: torch.nn.Module,
+    *,
+    training_config: Mapping[str, Any] | None = None,
+) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     payload = {
         "schema": "transport-v1",
         "route": model.route,
         "config": asdict(model.config),
+        "training_config": dict(training_config) if training_config is not None else None,
         "state_dict": {name: value.detach().cpu() for name, value in model.state_dict().items()},
     }
     torch.save(payload, destination)
@@ -38,6 +44,7 @@ def save_source_calibration(
     *,
     transport_route: str,
     transport_config: TransportConfig,
+    training_config: Mapping[str, Any] | None = None,
 ) -> None:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
@@ -45,6 +52,7 @@ def save_source_calibration(
         "schema": "conditional-source-calibration-v1",
         "transport_route": transport_route,
         "transport_config": asdict(transport_config),
+        "training_config": dict(training_config) if training_config is not None else None,
         "config": asdict(calibration.config),
         "state_dict": {
             name: value.detach().cpu() for name, value in calibration.state_dict().items()
@@ -62,4 +70,3 @@ def load_source_calibration(
     calibration = ConditionalSourceCalibration(SourceCalibrationConfig(**payload["config"]))
     calibration.load_state_dict(payload["state_dict"], strict=True)
     return calibration.to(device)
-

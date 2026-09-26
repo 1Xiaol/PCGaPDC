@@ -16,9 +16,11 @@ def rectified_flow_loss(
     evidence: torch.Tensor | None = None,
     evidence_mask: torch.Tensor | None = None,
     *,
-    context_weight: float = 0.1,
+    context_weight: float,
 ) -> dict[str, torch.Tensor]:
     """Spherical conditional flow matching plus in-batch context InfoNCE."""
+    if context_weight < 0 or not torch.isfinite(torch.tensor(context_weight)):
+        raise ValueError("context_weight must be finite and nonnegative")
     if source.shape != target.shape or source.ndim != 3:
         raise ValueError("source and target must share [batch, sample, dimension]")
     batch, samples, _ = source.shape

@@ -16,38 +16,78 @@ from recdiffusion.transport import TransportConfig, build_transport, parameter_g
 from recdiffusion.training import rectified_flow_loss
 
 
+def load_model_config(path: Path) -> tuple[str, TransportConfig]:
+    raw = read_json(path)
+    route = raw.get("route")
+    if route not in ("history_conditioned_rfm", "dual_view_conditioned_rfm"):
+        raise ValueError("model config must declare a supported route")
+    names = {field.name for field in fields(TransportConfig)}
+    missing = sorted(names - set(raw))
+    if missing:
+        raise ValueError(f"model config is missing fields: {missing}")
+    return route, TransportConfig(**{name: raw[name] for name in names})
+
+
+def load_training_config(path: Path) -> dict:
+    raw = read_json(path)
+    config = raw.get("transport")
+    required = {
+        "updates",
+        "batch_size",
+        "seed",
+        "encoder_lr",
+        "transport_lr",
+        "info_nce_weight",
+        "warmup_updates",
+        "weight_decay",
+        "gradient_clip",
+        "log_interval",
+    }
+    if not isinstance(config, dict) or required - set(config):
+        raise ValueError(f"training config transport fields missing: {sorted(required - set(config or {}))}")
+    return raw
+
+
+def set_warmup_lr(optimizer: torch.optim.Optimizer, update: int, warmup_updates: int) -> None:
+    factor = 1.0 if warmup_updates <= 0 else min(1.0, update / warmup_updates)
+    for group in optimizer.param_groups:
+        group["lr"] = float(group["base_lr"]) * factor
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--config", type=Path)
-    parser.add_argument(
-        "--route",
-        choices=("history_conditioned_rfm", "dual_view_conditioned_rfm"),
-        required=True,
-    )
-    parser.add_argument("--updates", type=int, default=1000)
-    parser.add_argument("--batch-size", type=int, default=32)
-    parser.add_argument("--seed", type=int, default=2026)
+    parser.add_argument("--model-config", type=Path, required=True)
+    parser.add_argument("--training-config", type=Path, required=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
     arrays = load_training_npz(args.input)
     device = torch.device(args.device)
-    config = TransportConfig()
-    if args.config is not None:
-        raw = read_json(args.config)
-        names = {field.name for field in fields(TransportConfig)}
-        config = TransportConfig(**{name: raw[name] for name in names if name in raw})
-    torch.manual_seed(args.seed)
+    route, model_config = load_model_config(args.model_config)
+    training_config = load_training_config(args.training_config)
+    train = training_config["transport"]
+    if training_config.get("route") not in (None, route):
+        raise ValueError("training and model routes differ")
+    torch.manual_seed(int(train["seed"]))
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(args.seed)
-    model = build_transport(args.route, config, seed=args.seed).to(device)
-    optimizer = torch.optim.AdamW(parameter_groups(model), weight_decay=0.01)
-    generator = torch.Generator().manual_seed(args.seed)
+        torch.cuda.manual_seed_all(int(train["seed"]))
+    model = build_transport(route, model_config, seed=int(train["seed"])).to(device)
+    optimizer = torch.optim.AdamW(
+        parameter_groups(
+            model,
+            encoder_lr=float(train["encoder_lr"]),
+            transport_lr=float(train["transport_lr"]),
+        ),
+        weight_decay=float(train["weight_decay"]),
+    )
+    generator = torch.Generator().manual_seed(int(train["seed"]))
     users = len(arrays["source"])
-    for update in range(args.updates):
-        index = torch.randint(users, (args.batch_size,), generator=generator)
+    updates = int(train["updates"])
+    batch_size = int(train["batch_size"])
+    for update in range(updates):
+        index = torch.randint(users, (batch_size,), generator=generator)
         batch = {
             name: torch.from_numpy(values[index.numpy()]).to(device)
             for name, values in arrays.items()
@@ -60,15 +100,17 @@ def main() -> None:
             batch["history_mask"],
             batch["evidence"],
             batch["evidence_mask"],
+            context_weight=float(train["info_nce_weight"]),
         )
         optimizer.zero_grad(set_to_none=True)
         losses["loss"].backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), float(train["gradient_clip"]))
+        set_warmup_lr(optimizer, update + 1, int(train["warmup_updates"]))
         optimizer.step()
-        if update % 100 == 0 or update + 1 == args.updates:
+        if update % int(train["log_interval"]) == 0 or update + 1 == updates:
             print(json.dumps({"update": update + 1, **{k: float(v.detach()) for k, v in losses.items()}}))
-    save_transport(args.output, model)
-    print(json.dumps({"checkpoint": str(args.output), "route": args.route}))
+    save_transport(args.output, model, training_config=training_config)
+    print(json.dumps({"checkpoint": str(args.output), "route": route}))
 
 
 if __name__ == "__main__":

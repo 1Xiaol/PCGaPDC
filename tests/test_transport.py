@@ -61,7 +61,8 @@ def test_rectified_flow_loss_is_differentiable() -> None:
     history, evidence, history_mask, evidence_mask, source, target = synthetic_batch()
     model = build_transport("dual_view_conditioned_rfm", config)
     losses = rectified_flow_loss(
-        model, source, target, history, history_mask, evidence, evidence_mask
+        model, source, target, history, history_mask, evidence, evidence_mask,
+        context_weight=0.012,
     )
     losses["loss"].backward()
     assert torch.isfinite(losses["loss"])

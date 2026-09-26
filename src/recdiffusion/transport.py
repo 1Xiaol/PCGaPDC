@@ -332,8 +332,15 @@ def build_transport(
     raise ValueError(f"unknown route: {route}")
 
 
-def parameter_groups(model: nn.Module) -> list[dict]:
-    """Optimizer groups for the conditioning encoders and transport network."""
+def parameter_groups(
+    model: nn.Module,
+    *,
+    encoder_lr: float,
+    transport_lr: float,
+) -> list[dict]:
+    """Build optimizer groups from an explicit training configuration."""
+    if encoder_lr <= 0 or transport_lr <= 0:
+        raise ValueError("encoder_lr and transport_lr must be positive")
     if getattr(model, "route", None) == "dual_view_conditioned_rfm":
         encoder_parameters = list(model.history.parameters()) + list(model.evidence.parameters())
     else:
@@ -341,6 +348,6 @@ def parameter_groups(model: nn.Module) -> list[dict]:
     encoder_ids = {id(parameter) for parameter in encoder_parameters}
     remaining = [parameter for parameter in model.parameters() if id(parameter) not in encoder_ids]
     return [
-        {"params": encoder_parameters, "name": "encoders", "lr": 5e-5},
-        {"params": remaining, "name": "transport_fusion", "lr": 1e-4},
+        {"params": encoder_parameters, "name": "encoders", "base_lr": encoder_lr, "lr": encoder_lr},
+        {"params": remaining, "name": "transport", "base_lr": transport_lr, "lr": transport_lr},
     ]
