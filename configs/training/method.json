@@ -1,0 +1,12 @@
+{
+  "transport": {
+    "encoder_lr": 0.00002,
+    "transport_lr": 0.00004,
+    "info_nce_weight": 0.012,
+    "warmup_updates": 500
+  },
+  "source_calibration": {
+    "batch_size": 512,
+    "warmup_updates": 500
+  }
+}
