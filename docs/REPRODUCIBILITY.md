@@ -7,10 +7,10 @@ This workflow keeps model selection, final evaluation, kernel calibration, and j
 ## Execution Order
 
 1. Fix the dataset splits, text encoder, user axis, and item-embedding version.
-2. Select the dataset-specific formal training configuration from `configs/training/` and keep it with the run metadata.
+2. Use `configs/training/method.json` for the paper-level method settings. Keep run-specific budgets, seeds, and runtime controls outside the public method configuration.
 3. Calibrate a chordal bandwidth separately for each dataset using Train items only.
-4. Train the history-conditioned and dual-view conditioned transports with an explicit model config and training config. Use validation data for model selection.
-5. Freeze the selected dual-view transport and optimize conditional source calibration with the same dataset-specific training config.
+4. Train the history-conditioned and dual-view conditioned transports with an explicit model config, method config, and runtime arguments. Use validation data for model selection.
+5. Freeze the selected dual-view transport and optimize conditional source calibration with the same method config and explicit runtime arguments.
 6. Decode every internal variant with the same frozen embedding-conditioned caption decoder and decoding parameters.
 7. Re-encode generated captions with the same text encoder used for histories and targets.
 8. Evaluate all methods on the same users, targets, generated-sample count, and metric implementation.

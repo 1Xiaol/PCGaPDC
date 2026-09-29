@@ -24,7 +24,7 @@ The pretrained text encoder, language model, datasets, and trained weights are n
 
 Transport training uses a dense NPZ file containing source samples, paired targets, observed-history embeddings, collaborative-evidence embeddings, and padding masks. Source calibration uses a related NPZ file with a target-validity mask. Evaluation uses a separate NPZ file with generated embeddings and ragged history and target arrays.
 
-Formal optimization parameters are dataset-specific and stored in `configs/training/`. The model architecture and optimization configuration are passed separately to every training command.
+Public optimization parameters are stored in `configs/training/method.json`. Run-specific budgets, seeds, and runtime controls are supplied explicitly on the command line and are not embedded in the public method configuration.
 
 See [docs/DATA.md](docs/DATA.md) for the complete array contracts.
 
@@ -50,7 +50,13 @@ Train the history-conditioned transport:
 python scripts/train_transport.py \
   --input data/train_episodes.npz \
   --model-config configs/model/history_conditioned_rfm.json \
-  --training-config configs/training/recif_formal.json \
+  --training-config configs/training/method.json \
+  --updates <UPDATES> \
+  --batch-size <BATCH_SIZE> \
+  --seed <SEED> \
+  --weight-decay <WEIGHT_DECAY> \
+  --gradient-clip <GRADIENT_CLIP> \
+  --log-interval <LOG_INTERVAL> \
   --output outputs/history_conditioned_transport.pt
 ```
 
@@ -60,7 +66,13 @@ Train the dual-view conditioned transport:
 python scripts/train_transport.py \
   --input data/train_episodes.npz \
   --model-config configs/model/dual_view_conditioned_rfm.json \
-  --training-config configs/training/recif_formal.json \
+  --training-config configs/training/method.json \
+  --updates <UPDATES> \
+  --batch-size <BATCH_SIZE> \
+  --seed <SEED> \
+  --weight-decay <WEIGHT_DECAY> \
+  --gradient-clip <GRADIENT_CLIP> \
+  --log-interval <LOG_INTERVAL> \
   --output outputs/dual_view_conditioned_transport.pt
 ```
 
@@ -71,11 +83,18 @@ python scripts/train_source_calibration.py \
   --input data/source_calibration.npz \
   --transport outputs/dual_view_conditioned_transport.pt \
   --model-config configs/model/conditional_source_calibration.json \
-  --training-config configs/training/recif_formal.json \
+  --training-config configs/training/method.json \
+  --updates <UPDATES> \
+  --seed <SEED> \
+  --learning-rate <LEARNING_RATE> \
+  --heun-steps <HEUN_STEPS> \
+  --weight-decay <WEIGHT_DECAY> \
+  --gradient-clip <GRADIENT_CLIP> \
+  --log-interval <LOG_INTERVAL> \
   --output outputs/source_calibration.pt
 ```
 
-Use `configs/training/microlens_formal.json` for the MicroLens formal configuration. Use `configs/training/reference_quick.json` only when a short reference run is explicitly intended; it does not reproduce the reported tables.
+The public method configuration contains the paper-level transport and source-calibration settings. It intentionally does not contain run-specific update counts, seeds, selected checkpoints, or dataset-specific tuning outcomes.
 
 Generate semantic samples for caption decoding or embedding evaluation:
 

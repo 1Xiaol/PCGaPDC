@@ -32,16 +32,10 @@ def load_training_config(path: Path) -> dict:
     raw = read_json(path)
     config = raw.get("transport")
     required = {
-        "updates",
-        "batch_size",
-        "seed",
         "encoder_lr",
         "transport_lr",
         "info_nce_weight",
         "warmup_updates",
-        "weight_decay",
-        "gradient_clip",
-        "log_interval",
     }
     if not isinstance(config, dict) or required - set(config):
         raise ValueError(f"training config transport fields missing: {sorted(required - set(config or {}))}")
@@ -60,6 +54,12 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model-config", type=Path, required=True)
     parser.add_argument("--training-config", type=Path, required=True)
+    parser.add_argument("--updates", type=int, required=True)
+    parser.add_argument("--batch-size", type=int, required=True)
+    parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--weight-decay", type=float, required=True)
+    parser.add_argument("--gradient-clip", type=float, required=True)
+    parser.add_argument("--log-interval", type=int, required=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
@@ -70,24 +70,22 @@ def main() -> None:
     train = training_config["transport"]
     if training_config.get("route") not in (None, route):
         raise ValueError("training and model routes differ")
-    torch.manual_seed(int(train["seed"]))
+    torch.manual_seed(args.seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(int(train["seed"]))
-    model = build_transport(route, model_config, seed=int(train["seed"])).to(device)
+        torch.cuda.manual_seed_all(args.seed)
+    model = build_transport(route, model_config, seed=args.seed).to(device)
     optimizer = torch.optim.AdamW(
         parameter_groups(
             model,
             encoder_lr=float(train["encoder_lr"]),
             transport_lr=float(train["transport_lr"]),
         ),
-        weight_decay=float(train["weight_decay"]),
+        weight_decay=args.weight_decay,
     )
-    generator = torch.Generator().manual_seed(int(train["seed"]))
+    generator = torch.Generator().manual_seed(args.seed)
     users = len(arrays["source"])
-    updates = int(train["updates"])
-    batch_size = int(train["batch_size"])
-    for update in range(updates):
-        index = torch.randint(users, (batch_size,), generator=generator)
+    for update in range(args.updates):
+        index = torch.randint(users, (args.batch_size,), generator=generator)
         batch = {
             name: torch.from_numpy(values[index.numpy()]).to(device)
             for name, values in arrays.items()
@@ -104,10 +102,10 @@ def main() -> None:
         )
         optimizer.zero_grad(set_to_none=True)
         losses["loss"].backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), float(train["gradient_clip"]))
+        torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
         set_warmup_lr(optimizer, update + 1, int(train["warmup_updates"]))
         optimizer.step()
-        if update % int(train["log_interval"]) == 0 or update + 1 == updates:
+        if update % args.log_interval == 0 or update + 1 == args.updates:
             print(json.dumps({"update": update + 1, **{k: float(v.detach()) for k, v in losses.items()}}))
     save_transport(args.output, model, training_config=training_config)
     print(json.dumps({"checkpoint": str(args.output), "route": route}))

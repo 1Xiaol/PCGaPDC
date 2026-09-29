@@ -27,6 +27,13 @@ def main() -> None:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--model-config", type=Path, required=True)
     parser.add_argument("--training-config", type=Path, required=True)
+    parser.add_argument("--updates", type=int, required=True)
+    parser.add_argument("--seed", type=int, required=True)
+    parser.add_argument("--learning-rate", type=float, required=True)
+    parser.add_argument("--heun-steps", type=int, required=True)
+    parser.add_argument("--weight-decay", type=float, required=True)
+    parser.add_argument("--gradient-clip", type=float, required=True)
+    parser.add_argument("--log-interval", type=int, required=True)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     args = parser.parse_args()
 
@@ -42,38 +49,26 @@ def main() -> None:
     config = SourceCalibrationConfig(**{name: model_raw[name] for name in names})
     training_config = read_json(args.training_config)
     train = training_config.get("source_calibration")
-    required = {
-        "updates",
-        "batch_size",
-        "seed",
-        "learning_rate",
-        "warmup_updates",
-        "heun_steps",
-        "weight_decay",
-        "gradient_clip",
-        "log_interval",
-    }
+    required = {"batch_size", "warmup_updates"}
     if not isinstance(train, dict) or required - set(train):
         raise ValueError(f"training config source_calibration fields missing: {sorted(required - set(train or {}))}")
     expected_cond_dim = transport.config.condition_dim * (transport.config.global_tokens + 1)
     if config.cond_dim != expected_cond_dim or config.semantic_dim != transport.config.semantic_dim:
         raise ValueError("source-calibration dimensions do not match the transport")
 
-    torch.manual_seed(int(train["seed"]))
+    torch.manual_seed(args.seed)
     if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(int(train["seed"]))
+        torch.cuda.manual_seed_all(args.seed)
     calibration = ConditionalSourceCalibration(config).to(device)
     optimizer = torch.optim.AdamW(
         calibration.parameters(),
-        lr=float(train["learning_rate"]),
-        weight_decay=float(train["weight_decay"]),
+        lr=args.learning_rate,
+        weight_decay=args.weight_decay,
     )
-    generator = torch.Generator().manual_seed(int(train["seed"]))
+    generator = torch.Generator().manual_seed(args.seed)
     users = len(arrays["source"])
-    updates = int(train["updates"])
-    batch_size = int(train["batch_size"])
-    for update in range(updates):
-        index = torch.randint(users, (batch_size,), generator=generator)
+    for update in range(args.updates):
+        index = torch.randint(users, (int(train["batch_size"]),), generator=generator)
         batch = {
             name: torch.from_numpy(values[index.numpy()]).to(device)
             for name, values in arrays.items()
@@ -89,7 +84,7 @@ def main() -> None:
         generated = spherical_heun(
             lambda value, time: transport.velocity(value, time, memory),
             adjusted,
-            steps=int(train["heun_steps"]),
+            steps=args.heun_steps,
         )
         losses = source_calibration_loss(
             generated, batch["target"], batch["target_valid"], movement
@@ -97,14 +92,14 @@ def main() -> None:
         loss = losses["loss"].mean()
         optimizer.zero_grad(set_to_none=True)
         loss.backward()
-        torch.nn.utils.clip_grad_norm_(calibration.parameters(), float(train["gradient_clip"]))
+        torch.nn.utils.clip_grad_norm_(calibration.parameters(), args.gradient_clip)
         factor = 1.0 if int(train["warmup_updates"]) <= 0 else min(
             1.0, (update + 1) / int(train["warmup_updates"])
         )
         for group in optimizer.param_groups:
-            group["lr"] = float(train["learning_rate"]) * factor
+            group["lr"] = args.learning_rate * factor
         optimizer.step()
-        if update % int(train["log_interval"]) == 0 or update + 1 == updates:
+        if update % args.log_interval == 0 or update + 1 == args.updates:
             record = {"update": update + 1, **{name: float(value.mean().detach()) for name, value in losses.items()}}
             print(json.dumps(record))
     save_source_calibration(
